@@ -1,19 +1,21 @@
 FROM python:3.11-slim
 
 WORKDIR /app
+RUN pip install --no-cache-dir gunicorn
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir gunicorn
+
 
 # Copy the .env file first
-COPY .env .
+# COPY .env . # ATTENTION. We shouldn't copy secrets to the image
 
 # Copy the backend code
 COPY . .
 
 # Set environment variable
 ENV PYTHONPATH=/app
+
 
 ENV ENV_MODE="production"
 

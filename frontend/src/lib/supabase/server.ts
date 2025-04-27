@@ -13,8 +13,8 @@ export const createClient = async () => {
     supabaseUrl = `http://${supabaseUrl}`;
   }
   
-  console.log('[SERVER] Supabase URL:', supabaseUrl);
-  console.log('[SERVER] Supabase Anon Key:', supabaseAnonKey);
+  // console.log('[SERVER] Supabase URL:', supabaseUrl);
+  // console.log('[SERVER] Supabase Anon Key:', supabaseAnonKey);
 
   return createServerClient(
     supabaseUrl,

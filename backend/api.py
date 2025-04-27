@@ -17,6 +17,7 @@ from collections import OrderedDict
 from agent import api as agent_api
 from sandbox import api as sandbox_api
 from utils import cron_api
+from services import billing as billing_api
 
 # Load environment variables (these will be available through config)
 load_dotenv()
@@ -134,8 +135,11 @@ app.include_router(agent_api.router, prefix="/api")
 # Include the sandbox router with a prefix
 app.include_router(sandbox_api.router, prefix="/api")
 
-# Include the cron API router with a prefix
+# Include the cron API router with a prefix auto_delete_sandbox
 app.include_router(cron_api.router, prefix="/api/cron")
+
+# Include the billing router with a prefix
+app.include_router(billing_api.router, prefix="/api")
 
 @app.get("/api/health")
 async def health_check():
@@ -157,5 +161,6 @@ if __name__ == "__main__":
         "api:app", 
         host="0.0.0.0", 
         port=8000,
-        workers=workers
+        workers=workers,
+        reload=True
     )

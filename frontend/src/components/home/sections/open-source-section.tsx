@@ -19,12 +19,12 @@ export function OpenSourceSection() {
           </p>
         </SectionHeader>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-12">
           <div className="rounded-xl bg-[#F3F4F6] dark:bg-[#F9FAFB]/[0.02] border border-border p-6">
             <div className="flex flex-col gap-6">
               <div className="flex items-center gap-2 text-primary font-medium">
                 <Github className="h-5 w-5" />
-                <span>Kortix/Suna</span>
+                <span>kortix-ai/suna</span>
               </div>
               <div className="relative">
                 <h3 className="text-2xl font-semibold tracking-tight">

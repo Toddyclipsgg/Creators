@@ -14,7 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useBillingError } from "@/hooks/useBillingError";
 import { BillingErrorAlert } from "@/components/billing/usage-limit-alert";
 import { useAccounts } from "@/hooks/use-accounts";
-import { isLocalMode } from "@/lib/config";
+import { isLocalMode, config } from "@/lib/config";
 import { toast } from "sonner";
 
 // Constant for localStorage key to ensure consistency
@@ -103,7 +103,7 @@ function DashboardContent() {
           limit: error.detail.limit as number | undefined,
           // Include subscription details if available in the error, otherwise provide defaults
           subscription: error.detail.subscription || {
-            price_id: "price_1RGJ9GG6l1KZGqIroxSqgphC", // Default to Free tier
+            price_id: config.SUBSCRIPTION_TIERS.FREE.priceId, // Default to Free tier
             plan_name: "Free"
           }
         });

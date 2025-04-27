@@ -1177,3 +1177,202 @@ export const checkApiHealth = async (): Promise<HealthCheckResponse> => {
   }
 };
 
+// Billing API Types
+export interface CreateCheckoutSessionRequest {
+  price_id: string;
+  success_url: string;
+  cancel_url: string;
+}
+
+export interface CreatePortalSessionRequest {
+  return_url: string;
+}
+
+export interface SubscriptionStatus {
+  status: string; // Includes 'active', 'trialing', 'past_due', 'scheduled_downgrade', 'no_subscription'
+  plan_name?: string;
+  price_id?: string; // Added
+  current_period_end?: string; // ISO Date string
+  cancel_at_period_end: boolean;
+  trial_end?: string; // ISO Date string
+  minutes_limit?: number;
+  current_usage?: number;
+  // Fields for scheduled changes
+  has_schedule: boolean;
+  scheduled_plan_name?: string;
+  scheduled_price_id?: string; // Added
+  scheduled_change_date?: string; // ISO Date string - Deprecate? Check backend usage
+  schedule_effective_date?: string; // ISO Date string - Added for consistency
+}
+
+export interface BillingStatusResponse {
+  can_run: boolean;
+  message: string;
+  subscription: {
+    price_id: string;
+    plan_name: string;
+    minutes_limit?: number;
+  };
+}
+
+export interface CreateCheckoutSessionResponse {
+  status: 'upgraded' | 'downgrade_scheduled' | 'checkout_created' | 'no_change' | 'new' | 'updated' | 'scheduled';
+  subscription_id?: string;
+  schedule_id?: string;
+  session_id?: string;
+  url?: string;
+  effective_date?: string;
+  message?: string;
+  details?: {
+    is_upgrade?: boolean;
+    effective_date?: string;
+    current_price?: number;
+    new_price?: number;
+    invoice?: {
+      id: string;
+      status: string;
+      amount_due: number;
+      amount_paid: number;
+    };
+  };
+}
+
+// Billing API Functions
+export const createCheckoutSession = async (request: CreateCheckoutSessionRequest): Promise<CreateCheckoutSessionResponse> => {
+  try {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.access_token) {
+      throw new Error('No access token available');
+    }
+
+    const response = await fetch(`${API_URL}/billing/create-checkout-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(request),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error details available');
+      console.error(`Error creating checkout session: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`Error creating checkout session: ${response.statusText} (${response.status})`);
+    }
+    
+    const data = await response.json();
+    console.log('Checkout session response:', data);
+    
+    // Handle all possible statuses
+    switch (data.status) {
+      case 'upgraded':
+      case 'updated':
+      case 'downgrade_scheduled':
+      case 'scheduled':
+      case 'no_change':
+        return data;
+      case 'new':
+      case 'checkout_created':
+        if (!data.url) {
+          throw new Error('No checkout URL provided');
+        }
+        return data;
+      default:
+        console.warn('Unexpected status from createCheckoutSession:', data.status);
+        return data;
+    }
+  } catch (error) {
+    console.error('Failed to create checkout session:', error);
+    throw error;
+  }
+};
+
+export const createPortalSession = async (request: CreatePortalSessionRequest): Promise<{ url: string }> => {
+  try {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.access_token) {
+      throw new Error('No access token available');
+    }
+
+    const response = await fetch(`${API_URL}/billing/create-portal-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(request),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error details available');
+      console.error(`Error creating portal session: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`Error creating portal session: ${response.statusText} (${response.status})`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Failed to create portal session:', error);
+    throw error;
+  }
+};
+
+export const getSubscription = async (): Promise<SubscriptionStatus> => {
+  try {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.access_token) {
+      throw new Error('No access token available');
+    }
+
+    const response = await fetch(`${API_URL}/billing/subscription`, {
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error details available');
+      console.error(`Error getting subscription: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`Error getting subscription: ${response.statusText} (${response.status})`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Failed to get subscription:', error);
+    throw error;
+  }
+};
+
+export const checkBillingStatus = async (): Promise<BillingStatusResponse> => {
+  try {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session?.access_token) {
+      throw new Error('No access token available');
+    }
+
+    const response = await fetch(`${API_URL}/billing/check-status`, {
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error details available');
+      console.error(`Error checking billing status: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`Error checking billing status: ${response.statusText} (${response.status})`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    console.error('Failed to check billing status:', error);
+    throw error;
+  }
+};
+
