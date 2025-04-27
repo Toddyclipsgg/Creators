@@ -24,6 +24,39 @@ import traceback
 # litellm.set_verbose=True
 litellm.modify_params=True
 
+# Inicialização do LiteLLM com as variáveis de ambiente disponíveis
+# Configuração das APIs disponíveis para uso pelo LiteLLM
+if config.OPENAI_API_KEY:
+    os.environ['OPENAI_API_KEY'] = config.OPENAI_API_KEY
+if config.ANTHROPIC_API_KEY:
+    os.environ['ANTHROPIC_API_KEY'] = config.ANTHROPIC_API_KEY
+if config.GROQ_API_KEY:
+    os.environ['GROQ_API_KEY'] = config.GROQ_API_KEY
+if config.OPENROUTER_API_KEY:
+    os.environ['OPENROUTER_API_KEY'] = config.OPENROUTER_API_KEY
+    if config.OPENROUTER_API_BASE:
+        os.environ['OPENROUTER_API_BASE'] = config.OPENROUTER_API_BASE
+if config.GEMINI_API_KEY:
+    os.environ['GEMINI_API_KEY'] = config.GEMINI_API_KEY
+# AWS Bedrock credentials
+if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY and config.AWS_REGION_NAME:
+    os.environ['AWS_ACCESS_KEY_ID'] = config.AWS_ACCESS_KEY_ID
+    os.environ['AWS_SECRET_ACCESS_KEY'] = config.AWS_SECRET_ACCESS_KEY
+    os.environ['AWS_REGION_NAME'] = config.AWS_REGION_NAME
+
+# Logs das APIs configuradas para facilitar depuração
+available_apis = []
+if config.OPENAI_API_KEY: available_apis.append("OpenAI")
+if config.ANTHROPIC_API_KEY: available_apis.append("Anthropic")
+if config.GROQ_API_KEY: available_apis.append("Groq")
+if config.OPENROUTER_API_KEY: available_apis.append("OpenRouter")
+if config.GEMINI_API_KEY: available_apis.append("Gemini")
+if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY and config.AWS_REGION_NAME:
+    available_apis.append("AWS Bedrock")
+
+logger.info(f"LLM service initialized with available APIs: {', '.join(available_apis)}")
+logger.info(f"Default model configured: {config.MODEL_TO_USE}")
+
 # Constants
 MAX_RETRIES = 3
 RATE_LIMIT_DELAY = 30
@@ -39,7 +72,7 @@ class LLMRetryError(LLMError):
 
 def setup_api_keys() -> None:
     """Set up API keys from environment variables."""
-    providers = ['OPENAI', 'ANTHROPIC', 'GROQ', 'OPENROUTER']
+    providers = ['OPENAI', 'ANTHROPIC', 'GROQ', 'OPENROUTER', 'GEMINI']
     for provider in providers:
         key = getattr(config, f'{provider}_API_KEY')
         if key:
@@ -90,6 +123,32 @@ def prepare_params(
     reasoning_effort: Optional[str] = 'low'
 ) -> Dict[str, Any]:
     """Prepare parameters for the API call."""
+    
+    # Verificar se é modelo Anthropic sem chave API e fazer fallback para outro provedor disponível
+    original_model = model_name
+    if ("anthropic" in model_name.lower() or "claude" in model_name.lower()) and not model_name.startswith("openrouter/") and not model_name.startswith("bedrock/"):
+        if not config.ANTHROPIC_API_KEY:
+            logger.warning(f"⚠️ Tentando usar modelo Anthropic '{model_name}' mas ANTHROPIC_API_KEY não está definida.")
+            
+            # Buscar provedor alternativo disponível (apenas 1 por provedor)
+            if config.GEMINI_API_KEY:
+                model_name = "gemini/gemini-2.5-pro-exp-03-25"
+                logger.info(f"Substituindo para modelo do Gemini: {model_name}")
+            elif config.OPENAI_API_KEY:
+                model_name = "openai/gpt-4.1-2025-04-14"
+                logger.info(f"Substituindo para modelo do OpenAI: {model_name}")
+            elif config.OPENROUTER_API_KEY:
+                model_name = "openrouter/google/gemini-2.0-flash-exp:free"
+                logger.info(f"Substituindo para modelo do OpenRouter: {model_name}")
+            elif config.GROQ_API_KEY:
+                model_name = "groq/llama3-70b-8192"
+                logger.info(f"Substituindo para modelo do Groq: {model_name}")
+            elif config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY and config.AWS_REGION_NAME:
+                model_name = "bedrock/amazon.titan-text-express-v1"
+                logger.info(f"Substituindo para modelo do AWS Bedrock: {model_name}")
+            else:
+                logger.error(f"Nenhum provedor LLM alternativo disponível. Configure pelo menos uma chave de API.")
+    
     params = {
         "model": model_name,
         "messages": messages,
@@ -282,6 +341,10 @@ async def make_llm_api_call(
     """
     # debug <timestamp>.json messages 
     logger.debug(f"Making LLM API call to model: {model_name} (Thinking: {enable_thinking}, Effort: {reasoning_effort})")
+    
+    # Armazenar modelo original para fallback inteligente
+    original_model_name = model_name
+    
     params = prepare_params(
         messages=messages,
         model_name=model_name,
@@ -298,6 +361,11 @@ async def make_llm_api_call(
         enable_thinking=enable_thinking,
         reasoning_effort=reasoning_effort
     )
+    
+    # O modelo pode ter sido alterado pelo prepare_params
+    model_name = params["model"]
+    fallback_attempted = False
+    
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -308,6 +376,54 @@ async def make_llm_api_call(
             logger.debug(f"Successfully received API response from {model_name}")
             logger.debug(f"Response: {response}")
             return response
+        
+        except litellm.exceptions.AuthenticationError as auth_err:
+            # Para erros de autenticação, tentar fallback para outro provedor
+            if not fallback_attempted:
+                fallback_attempted = True
+                logger.error(f"Erro de autenticação: {auth_err}")
+                
+                # Tentar encontrar um provedor alternativo disponível
+                alt_model = None
+                
+                if config.GEMINI_API_KEY and "gemini" not in model_name.lower():
+                    alt_model = "gemini/gemini-2.5-pro-exp-03-25"
+                elif config.OPENROUTER_API_KEY and "openrouter" not in model_name.lower():
+                    alt_model = "openrouter/google/gemini-2.0-flash-exp:free"
+                elif config.OPENAI_API_KEY and "openai" not in model_name.lower():
+                    alt_model = "openai/gpt-4o-mini"
+                elif config.GROQ_API_KEY and "groq" not in model_name.lower():
+                    alt_model = "groq/llama3-8b-8192"
+                elif config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY and config.AWS_REGION_NAME and "bedrock" not in model_name.lower():
+                    alt_model = "bedrock/amazon.titan-text-express-v1"
+                
+                if alt_model:
+                    logger.info(f"Tentando com provedor alternativo: {alt_model}")
+                    # Recriar parâmetros com o novo modelo
+                    params = prepare_params(
+                        messages=messages,
+                        model_name=alt_model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        api_key=api_key,
+                        api_base=api_base,
+                        stream=stream,
+                        top_p=top_p,
+                        model_id=None,  # Resetar model_id para o novo provedor
+                        enable_thinking=enable_thinking,
+                        reasoning_effort=reasoning_effort
+                    )
+                    model_name = alt_model
+                    continue  # Tenta novamente com o novo modelo
+                else:
+                    logger.error("Nenhum provedor alternativo disponível. Configure pelo menos uma chave de API.")
+            
+            # Se já tentou fallback ou não há alternativa, continua com retry normal
+            last_error = auth_err
+            await handle_error(auth_err, attempt, MAX_RETRIES)
             
         except (litellm.exceptions.RateLimitError, OpenAIError, json.JSONDecodeError) as e:
             last_error = e
@@ -394,6 +510,27 @@ async def test_bedrock():
         print(f"Error testing Bedrock: {str(e)}")
         return False
 
+async def test_gemini():
+    """Test the Gemini integration with a simple query."""
+    test_messages = [
+        {"role": "user", "content": "Hello, can you give me a quick test response?"}
+    ]
+    
+    try:    
+        response = await make_llm_api_call(
+            model_name="gemini/gemini-2.5-pro-exp-03-25",
+            messages=test_messages,
+            temperature=0.7,
+            max_tokens=100
+        )
+        print(f"Response: {response.choices[0].message.content}")
+        print(f"Model used: {response.model}")
+        
+        return True
+    except Exception as e:
+        print(f"Error testing Gemini: {str(e)}")
+        return False
+
 if __name__ == "__main__":
     import asyncio
         
@@ -403,3 +540,10 @@ if __name__ == "__main__":
         print("\n✅ integration test completed successfully!")
     else:
         print("\n❌ Bedrock integration test failed!")
+
+    test_success = asyncio.run(test_gemini())
+    
+    if test_success:
+        print("\n✅ Gemini integration test completed successfully!")
+    else:
+        print("\n❌ Gemini integration test failed!")

@@ -22,6 +22,7 @@ from agent.prompt import get_system_prompt
 from utils import logger
 from utils.auth_utils import get_account_id_from_thread
 from services.billing import check_billing_status
+from utils.config import config
 
 load_dotenv()
 
@@ -32,7 +33,7 @@ async def run_agent(
     thread_manager: Optional[ThreadManager] = None,
     native_max_auto_continues: int = 25,
     max_iterations: int = 150,
-    model_name: str = "anthropic/claude-3-7-sonnet-latest",
+    model_name: str = config.MODEL_TO_USE,
     enable_thinking: Optional[bool] = False,
     reasoning_effort: Optional[str] = 'low',
     enable_context_manager: bool = True

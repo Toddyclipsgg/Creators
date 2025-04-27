@@ -20,6 +20,7 @@ from utils.logger import logger
 from services.billing import check_billing_status
 from sandbox.sandbox import create_sandbox, get_or_start_sandbox
 from services.llm import make_llm_api_call
+from utils.config import config
 
 # Initialize shared resources
 router = APIRouter()
@@ -30,17 +31,100 @@ instance_id = None # Global instance ID for this backend instance
 # TTL for Redis response lists (24 hours)
 REDIS_RESPONSE_LIST_TTL = 3600 * 24
 
-MODEL_NAME_ALIASES = {
-    "sonnet-3.7": "anthropic/claude-3-7-sonnet-latest",
-    "gpt-4.1": "openai/gpt-4.1-2025-04-14",
-    "gemini-flash-2.5": "openrouter/google/gemini-2.5-flash-preview",
-    "grok-3": "xai/grok-3-fast-latest",
-    "deepseek": "deepseek/deepseek-chat",
-    "grok-3-mini": "xai/grok-3-mini-fast-beta",
-}
+# Define aliases com fallback inteligente para qualquer provedor disponível
+def get_model_aliases():
+    """
+    Retorna os aliases de modelos, com fallback inteligente para qualquer provedor disponível.
+    """
+    # Definição de modelos nativos para cada provedor (apenas 1 por provedor)
+    anthropic_models = {
+        "sonnet-3.7": "anthropic/claude-3-7-sonnet-latest",
+    }
+    
+    openai_models = {
+        "gpt-4.1": "openai/gpt-4.1-2025-04-14",
+    }
+    
+    gemini_models = {
+        "gemini-flash-2.5": "gemini/gemini-2.5-pro-exp-03-25",
+    }
+    
+    openrouter_models = {
+        "gemini-flash-2.0": "openrouter/google/gemini-2.0-flash-exp:free",
+    }
+    
+    groq_models = {
+        "groq-llama3-70b": "groq/llama3-70b-8192",
+    }
+    
+    other_models = {
+        "grok-3": "xai/grok-3-fast-latest",
+    }
+    
+    bedrock_models = {
+        "titan-text": "bedrock/amazon.titan-text-express-v1",
+    }
+    
+    # Manter Anthropic como padrão se a API key estiver disponível
+    if config.ANTHROPIC_API_KEY:
+        aliases = {**anthropic_models, **openai_models, **gemini_models, **openrouter_models, **other_models}
+        logger.debug("Usando Anthropic como provedor padrão para aliases")
+    # Senão, tentar Gemini
+    elif config.GEMINI_API_KEY:
+        # Substituir modelos Anthropic por Gemini, mantendo outros provedores
+        gemini_fallback = {
+            "sonnet-3.7": gemini_models["gemini-flash-2.5"],  # Substituir por Gemini
+        }
+        aliases = {**gemini_fallback, **openai_models, **gemini_models, **openrouter_models, **other_models}
+        logger.debug("Usando Gemini como provedor padrão para aliases")
+    # Senão, encontrar alternativa baseada nas APIs disponíveis
+    elif config.OPENAI_API_KEY:
+        # Substituir modelos Anthropic por OpenAI, mantendo outros provedores
+        openai_fallback = {
+            "sonnet-3.7": openai_models["gpt-4.1"],  # Substituir Anthropic por OpenAI
+        }
+        aliases = {**openai_fallback, **openai_models, **gemini_models, **openrouter_models, **other_models}
+        logger.debug("Usando OpenAI como provedor padrão para aliases")
+    elif config.OPENROUTER_API_KEY:
+        # Substituir modelos Anthropic por OpenRouter, mantendo outros provedores
+        openrouter_fallback = {
+            "sonnet-3.7": openrouter_models["gemini-flash-2.0"],  # Substituir Anthropic por OpenRouter
+        }
+        aliases = {**openrouter_fallback, **openai_models, **gemini_models, **openrouter_models, **other_models}
+        logger.debug("Usando OpenRouter como provedor padrão para aliases")
+    elif config.GROQ_API_KEY:
+        # Substituir todos os modelos não-Groq por modelos Groq equivalentes
+        groq_fallback = {
+            "sonnet-3.7": groq_models["groq-llama3-70b"],
+            "gemini-flash-2.0": groq_models["groq-llama3-70b"],
+            "gemini-flash-2.5": groq_models["groq-llama3-70b"],
+            "gpt-4.1": groq_models["groq-llama3-70b"],
+            "grok-3": groq_models["groq-llama3-70b"],
+        }
+        aliases = {**groq_fallback, **groq_models}
+        logger.debug("Usando Groq como provedor padrão para aliases")
+    elif config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY and config.AWS_REGION_NAME:
+        # Substituir todos os modelos não-AWS por modelos AWS equivalentes
+        bedrock_fallback = {
+            "sonnet-3.7": bedrock_models["titan-text"],
+            "gemini-flash-2.0": bedrock_models["titan-text"],
+            "gemini-flash-2.5": bedrock_models["titan-text"],
+            "gpt-4.1": bedrock_models["titan-text"],
+            "grok-3": bedrock_models["titan-text"],
+        }
+        aliases = {**bedrock_fallback, **bedrock_models}
+        logger.debug("Usando AWS Bedrock como provedor padrão para aliases")
+    else:
+        # Se nenhuma API tiver configurada, manter o padrão mas emitir aviso
+        aliases = {**anthropic_models, **openai_models, **gemini_models, **openrouter_models, **other_models}
+        logger.warning("Nenhum provedor LLM tem chave de API configurada. Os aliases padrão terão falhas de autenticação.")
+    
+    return aliases
+
+MODEL_NAME_ALIASES = get_model_aliases()
 
 class AgentStartRequest(BaseModel):
-    model_name: Optional[str] = "anthropic/claude-3-7-sonnet-latest"
+    model_name: Optional[str] = "anthropic/claude-3-7-sonnet-latest"  # Restaura o padrão para Anthropic
     enable_thinking: Optional[bool] = False
     reasoning_effort: Optional[str] = 'low'
     stream: Optional[bool] = True
@@ -395,12 +479,15 @@ async def start_agent(
     except Exception as e:
         logger.warning(f"Failed to register agent run in Redis ({instance_key}): {str(e)}")
 
+    # Get the latest aliases in case something changed
+    current_aliases = get_model_aliases()
+    
     # Run the agent in the background
     task = asyncio.create_task(
         run_agent_background(
             agent_run_id=agent_run_id, thread_id=thread_id, instance_id=instance_id,
             project_id=project_id, sandbox=sandbox,
-            model_name=MODEL_NAME_ALIASES.get(body.model_name, body.model_name),
+            model_name=current_aliases.get(body.model_name, body.model_name),
             enable_thinking=body.enable_thinking, reasoning_effort=body.reasoning_effort,
             stream=body.stream, enable_context_manager=body.enable_context_manager
         )
@@ -866,6 +953,31 @@ async def initiate_agent_with_files(
     if not instance_id:
         raise HTTPException(status_code=500, detail="Agent API not initialized with instance ID")
 
+    # Verificar se o modelo selecionado é do Anthropic e não tem chave API configurada
+    original_model = model_name
+    if ("anthropic" in model_name.lower() or "claude" in model_name.lower()) and not model_name.startswith("openrouter/") and not model_name.startswith("bedrock/"):
+        if not config.ANTHROPIC_API_KEY:
+            logger.warning(f"⚠️ Modelo Anthropic '{model_name}' solicitado mas ANTHROPIC_API_KEY não configurada.")
+            
+            # Buscar alternativa disponível (apenas 1 por provedor)
+            if config.GEMINI_API_KEY:
+                model_name = "gemini/gemini-2.5-pro-exp-03-25"
+                logger.info(f"Substituindo para modelo do Gemini: {model_name}")
+            elif config.OPENAI_API_KEY:
+                model_name = "openai/gpt-4.1-2025-04-14"
+                logger.info(f"Substituindo para modelo do OpenAI: {model_name}")
+            elif config.OPENROUTER_API_KEY:
+                model_name = "openrouter/google/gemini-2.0-flash-exp:free"
+                logger.info(f"Substituindo para modelo do OpenRouter: {model_name}")
+            elif config.GROQ_API_KEY:
+                model_name = "groq/llama3-70b-8192" 
+                logger.info(f"Substituindo para modelo do Groq: {model_name}")
+            elif config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY and config.AWS_REGION_NAME:
+                model_name = "bedrock/amazon.titan-text-express-v1"
+                logger.info(f"Substituindo para modelo do AWS Bedrock: {model_name}")
+            else:
+                logger.error("Nenhum provedor LLM alternativo disponível. Configure pelo menos uma chave de API.")
+
     logger.info(f"[\033[91mDEBUG\033[0m] Initiating new agent with prompt and {len(files)} files (Instance: {instance_id}), model: {model_name}, enable_thinking: {enable_thinking}")
     client = await db.client
     account_id = user_id # In Basejump, personal account_id is the same as user_id
@@ -981,12 +1093,15 @@ async def initiate_agent_with_files(
         except Exception as e:
             logger.warning(f"Failed to register agent run in Redis ({instance_key}): {str(e)}")
 
+        # Get the latest aliases in case something changed
+        current_aliases = get_model_aliases()
+        
         # Run agent in background
         task = asyncio.create_task(
             run_agent_background(
                 agent_run_id=agent_run_id, thread_id=thread_id, instance_id=instance_id,
                 project_id=project_id, sandbox=sandbox,
-                model_name=MODEL_NAME_ALIASES.get(model_name, model_name),
+                model_name=current_aliases.get(model_name, model_name),
                 enable_thinking=enable_thinking, reasoning_effort=reasoning_effort,
                 stream=stream, enable_context_manager=enable_context_manager
             )
