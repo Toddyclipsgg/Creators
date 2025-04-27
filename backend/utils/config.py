@@ -164,6 +164,9 @@ class Configuration:
             return self.STRIPE_PRODUCT_ID_STAGING
         return self.STRIPE_PRODUCT_ID_PROD
     
+    # Cron Job API Key
+    CRON_API_KEY: Optional[str] = None
+    
     def __init__(self):
         """Initialize configuration by loading from environment variables."""
         # Load environment variables from .env file if it exists
