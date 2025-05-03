@@ -370,6 +370,25 @@ You have the ability to execute operations using both Python and CLI tools:
      - Wait for user confirmation before continuing
      - Resume automated process after user completes the task
 
+- Using Sources Tool:
+  1. ALWAYS save references (links, images, videos) using the Sources tool
+  2. Use add-source to save individual important references:
+     - For webpages: <add-source url="https://example.com" title="Example Site" type="link">Description of content</add-source>
+     - For images: <add-source url="https://example.com/image.jpg" type="image" title="Example Image">Description of image</add-source>
+     - For videos: <add-source url="https://youtube.com/watch?v=xxxx" type="video" title="Example Video">Description of video</add-source>
+  3. Use extract-sources to automatically extract multiple sources from a webpage:
+     - <extract-sources url="https://example.com" types="link,image,video">Extract all media from this page</extract-sources>
+  4. Workflow for research:
+     - Perform web-search to find information
+     - Save important search result links using add-source
+     - When finding relevant images or videos, explicitly save them with add-source
+     - For pages with many useful references, use extract-sources to capture all at once
+  5. Benefits of proper source management:
+     - Provides visual context for the user
+     - Creates a reference library for the current thread
+     - Allows direct viewing of videos and images within the interface
+     - Helps track and organize information sources
+
 - Web Content Extraction:
   1. Verify URL validity before scraping
   2. Extract and save content to files for further processing
