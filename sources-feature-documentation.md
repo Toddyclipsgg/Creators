@@ -10,6 +10,27 @@ O recurso "Sources" foi implementado para permitir que o agente da Suna.so anexe
 - Ausência de visualização direta de vídeos e imagens referenciadas
 - Inconsistência na exibição de conteúdo de diferentes formatos
 
+## Guia de Implementação Rápida
+
+A implementação foi realizada na branch `feature/sources` com os seguintes passos:
+
+1. **Backend**: 
+   - Criado `sources_tool.py` com a ferramenta SourcesTool incluindo métodos `add_source` e `extract_sources`
+   - Registrado a ferramenta no `run.py` e atualizado instruções no `prompt.py`
+
+2. **Frontend**:
+   - Criado `SourcesToolView.tsx` com sistema de abas, exibição de links, imagens e vídeos
+   - Integrado componente em `tool-call-side-panel.tsx` para os tipos 'add-source' e 'extract-sources'
+   - Implementado armazenamento local no localStorage para persistência de fontes
+
+3. **Correções**:
+   - Corrigido erro de importação nos decoradores: alterado de `agentpress.decorators` para `agentpress.tool`
+   - O import correto é: `from agentpress.tool import Tool, ToolResult, openapi_schema, xml_schema`
+
+4. **Versão de Controle**:
+   - Branch: `feature/sources`
+   - Commit: "Adiciona recurso Sources para referências de links, imagens e vídeos"
+
 ## Arquitetura e Componentes
 
 ![Arquitetura do Recurso Sources](docs/images/sources-architecture.png)
@@ -24,257 +45,98 @@ O recurso "Sources" foi implementado para permitir que o agente da Suna.so anexe
   - **Decoradores**: Utiliza `@openapi_schema` e `@xml_schema` para definir a interface da ferramenta
 
 - **`backend/agent/run.py`**: Arquivo onde a ferramenta é registrada no sistema de agentes
-  - **Linha 50**: Adição da importação `from agent.tools.sources_tool import SourcesTool`
-  - **Linha 94**: Registro da ferramenta no thread manager com `thread_manager.add_tool(SourcesTool)`
+  - **Linha 25**: Adição da importação `from agent.tools.sources_tool import SourcesTool`
+  - **Linha 71**: Registro da ferramenta no thread manager com `thread_manager.add_tool(SourcesTool)`
 
 - **`backend/agent/prompt.py`**: Atualização do prompt do sistema para incluir instruções sobre o uso de fontes
-  - **Linhas 347-367**: Seção modificada sobre "Using Sources Tool (MANDATORY for Videos, Images, and Links)"
-  - **Linhas 373-403**: Instruções sobre gerenciamento de fontes e workflow obrigatório
+  - **Linhas 347-367**: Seção adicionada sobre "Using Sources Tool"
 
 ### Frontend (`/frontend`)
 
 - **`frontend/src/components/thread/tool-views/SourcesToolView.tsx`**: Componente principal para renderização de fontes
-  - **Linhas 1-836**: Implementação completa do componente de visualização de fontes
-  - **Interface**: Define tipos para `Source`, `SourceStats` e outras estruturas de dados
+  - **407 linhas**: Implementação compacta do componente de visualização de fontes
+  - **Interface**: Define tipos para `Source` e outras estruturas de dados
 
-- **`frontend/src/components/thread/tool-call-side-panel.tsx`**: Integração do componente SourcesToolView no painel lateral
-  - **Linhas 22-23**: Importação do componente SourcesToolView
-  - **Linhas 113-120**: Registro do componente para uso com tipos 'add-source' e 'extract-sources'
-
-- **`frontend/src/components/thread/tool-views/utils.ts`**: Funções utilitárias para processamento de fontes
-  - **Linhas 612-654**: Funções para extrair URLs, títulos e conteúdo de webpages
-  - **Linhas 655-684**: Função `getToolComponent` atualizada para incluir componentes de Sources
+- **`frontend/src/components/thread/tool-call-side-panel.tsx`**: Integração do componente SourcesToolView
+  - **Linha 21**: Importação do componente SourcesToolView
+  - **Linhas 142-152**: Registro do componente para uso com tipos 'add-source' e 'extract-sources'
 
 ## Implementação Detalhada
 
 ### Backend: SourcesTool (`backend/agent/tools/sources_tool.py`)
 
-A implementação completa da ferramenta segue o padrão estabelecido pelo sistema de ferramentas da Suna.so:
+A implementação é compacta e eficiente, com foco em três funcionalidades principais:
+
+1. **Detecção automática de tipo de mídia**: Identifica automaticamente URLs de YouTube, imagens e outros tipos
+2. **Extração de informações de URLs**: Extrai título e metadados de páginas web
+3. **Raspagem de conteúdo**: Extrai fontes de HTML quando fornecido um URL
+
+Exemplo do método central:
 
 ```python
-class SourcesTool(Tool):
-    """Tool for saving and managing sources like links, images, and videos."""
-
-    def __init__(self):
-        super().__init__()
-        # Load environment variables
-        load_dotenv()
-
-    @openapi_schema({
-        "type": "function",
-        "function": {
-            "name": "add_source",
-            "description": "Add a source (link, image, or video) to the current thread. This tool allows you to save references to web content that can be displayed in the thread's sources section.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL of the source to add (webpage, image, or video URL)."
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "A descriptive title for the source. If not provided, the system will attempt to extract one from the URL."
-                    },
-                    "type": {
-                        "type": "string",
-                        "description": "The type of the source: 'link', 'image', or 'video'.",
-                        "enum": ["link", "image", "video"],
-                        "default": "link"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Optional description of the source content."
-                    }
-                },
-                "required": ["url"]
-            }
-        }
-    })
-    @xml_schema(
-        tag_name="add-source",
-        mappings=[
-            {"param_name": "url", "node_type": "attribute", "path": "."},
-            {"param_name": "title", "node_type": "attribute", "path": "."},
-            {"param_name": "type", "node_type": "attribute", "path": "."},
-            {"param_name": "description", "node_type": "text", "path": "."}
-        ],
-        example='''<add-source url="https://example.com/video" title="Example Video" type="video">Description text</add-source>'''
-    )
-    async def add_source(self, url: str, title: Optional[str] = None, 
-                        type: str = "link", description: Optional[str] = None) -> ToolResult:
-        """
-        Adiciona uma fonte (link, imagem ou vídeo) ao thread atual.
-        
-        Implementação:
-        1. Valida o URL e tipo fornecidos
-        2. Auto-detecta o tipo de mídia baseado na URL se não especificado
-        3. Cria um objeto fonte estruturado com metadados
-        4. Retorna o objeto para ser processado pelo frontend
-        """
-        # [Código detalhado com algoritmo de detecção de tipo de mídia]
-        # ...
-```
-
-#### Algoritmo de Detecção de Tipo de Mídia (`add_source`, linhas 77-88)
-
-```python
-# Auto-detect type if not specified or if we can improve it
-if type == "link":
-    # Check for video URLs usando regex para maior precisão
-    youtube_patterns = [
-        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)',
-        r'youtube\.com\/shorts\/',
-        r'youtube\.com\/v\/'
-    ]
-    
-    is_youtube = any(re.search(pattern, url, re.IGNORECASE) for pattern in youtube_patterns)
-    
-    if is_youtube:
-        type = "video"
-    # Check for image URLs
-    elif url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg')):
-        type = "image"
-```
-
-#### Extração de Fontes (`extract_sources`, linhas 140-269)
-
-A função `extract_sources` utiliza diferentes estratégias para extrair fontes de conteúdo:
-
-1. **Extração de URL**: Utiliza expressões regulares para identificar URLs de páginas web, imagens e vídeos
-2. **Raspagem de HTML**: Quando fornecido um URL, raspa o conteúdo HTML para extrair links, imagens e vídeos embutidos
-3. **Processamento de Texto**: Identifica URLs em texto livre fornecido pelo usuário
-4. **Classificação**: Categoriza automaticamente as fontes baseado em padrões de URL e conteúdo
-
-```python
-async def extract_sources(self, url: Optional[str] = None, 
-                         content: Optional[str] = None,
-                         types: Optional[List[str]] = None) -> ToolResult:
+async def add_source(self, url: str, title: Optional[str] = None, 
+                    type: str = "link", description: Optional[str] = None) -> ToolResult:
     """
-    Extrai fontes (links, imagens, vídeos) de um URL ou conteúdo textual.
-    
-    Parameters:
-    -----------
-    url : str, optional
-        URL da página para extrair fontes
-    content : str, optional
-        Texto para analisar e extrair fontes
-    types : List[str], optional
-        Tipos de fontes a serem extraídas (link, image, video)
-        
-    Returns:
-    --------
-    ToolResult
-        Resultado contendo lista de fontes extraídas
+    Adiciona uma fonte (link, imagem ou vídeo) ao thread atual.
     """
-    # [Implementação detalhada da extração]
+    # Auto-detectar tipo se não especificado
+    if type == "link":
+        # Verificar URLs de vídeo
+        youtube_patterns = [...]
+        is_youtube = any(re.search(pattern, url, re.IGNORECASE) for pattern in youtube_patterns)
+        
+        if is_youtube:
+            type = "video"
+        # Verificar URLs de imagem
+        elif url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg')):
+            type = "image"
+    
+    # Extrair título da URL se não fornecido
+    if not title:
+        # Lógica de extração de título...
+    
+    # Criar o objeto fonte
+    source = {
+        "url": url,
+        "title": title,
+        "type": type,
+        "description": description,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    return ToolResult(success=True, output=source)
 ```
 
 ### Frontend: SourcesToolView (`frontend/src/components/thread/tool-views/SourcesToolView.tsx`)
 
-O componente frontend é responsável por exibir as fontes de forma organizada e categorizada, com suporte para diferentes tipos de mídia.
+O componente frontend implementa:
 
-#### Definição de Interfaces (linhas 6-19)
+1. **Sistema de persistência**: Armazena fontes no localStorage por thread
+2. **UI com abas**: Filtra fontes por tipo (Todos, Links, Imagens, Vídeos)
+3. **Visualização integrada**: Renderiza imagens e vídeos diretamente na interface
 
-```typescript
-// Definição de tipos para as fontes
-interface Source {
-  url: string;
-  title: string;
-  type: "link" | "image" | "video" | "social" | "community" | "academic";
-  description?: string;
-  timestamp?: string;
-  category?: string;
-}
-
-// Interface para estatísticas das fontes
-interface SourceStats {
-  total: number;
-  byCategory: Record<string, number>;
-}
-```
-
-#### Sistema de Armazenamento Local (linhas 22-48)
-
-O componente implementa um sistema de persistência local usando localStorage para garantir que fontes permaneçam disponíveis entre sessões:
+Destaques da implementação:
 
 ```typescript
-// Chave base para armazenamento no localStorage
-const STORAGE_KEY_BASE = "suna_sources_data";
-
-// Função para obter a chave de armazenamento específica para o thread atual
-function getStorageKey(threadId?: string): string {
-  if (!threadId) return STORAGE_KEY_BASE;
-  return `${STORAGE_KEY_BASE}_${threadId}`;
-}
-
-// Função para carregar fontes do localStorage específicas para um thread
-function loadSourcesFromStorage(threadId?: string): Source[] {
-  if (typeof window === "undefined") return [];
-  
+// Extração de fontes do conteúdo da ferramenta
+function extractSourcesFromToolContent(content: string): Source[] {
+  // Múltiplas estratégias de extração para diferentes formatos de resposta
   try {
-    const storageKey = getStorageKey(threadId);
-    const storedData = localStorage.getItem(storageKey);
-    if (!storedData) return [];
-    
-    const parsedData = JSON.parse(storedData);
-    return Array.isArray(parsedData) ? parsedData : [];
+    // Tentar parse como JSON
+    // Estratégias de fallback
+    // Extração via regex
   } catch (error) {
-    console.error("Erro ao carregar fontes do localStorage:", error);
-    return [];
+    console.error("Erro ao extrair fontes:", error);
   }
+  
+  return [];
 }
-```
 
-#### Extração de ID de Vídeos do YouTube (linhas 62-90)
-
-A função `getYoutubeVideoId` é uma implementação robusta que lida com múltiplos formatos de URL do YouTube:
-
-```typescript
-// Helper function to extract YouTube video ID from URL
-function getYoutubeVideoId(url: string): string | null {
-  if (!url) return null;
-  
-  // Limpar URL de caracteres de escape primeiro
-  const cleanedUrl = cleanUrl(url);
-  
-  // Limpar possíveis parametros adicionais
-  const urlWithoutParams = cleanedUrl.split('&')[0];
-  
-  // Padrões comuns de URLs do YouTube
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/i,
-    /(?:youtube\.com\/watch\?v=)([^&]+)/i,
-    /(?:youtu\.be\/)([^?]+)/i
-  ];
-  
-  for (const pattern of patterns) {
-    const match = urlWithoutParams.match(pattern);
-    if (match && match[1]) {
-      return match[1];
-    }
-  }
-  
-  // Se não encontrou com os padrões padrão, tenta uma abordagem mais flexível
-  const anyYoutubeId = cleanedUrl.match(/(?:v=|\/)([\w-]{11})(?:\?|&|\/|$)/);
-  if (anyYoutubeId && anyYoutubeId[1]) {
-    return anyYoutubeId[1];
-  }
-  
-  return null;
-}
-```
-
-#### Renderização de Vídeos do YouTube (linhas 462-494)
-
-A implementação de iframe para vídeos do YouTube substitui a abordagem anterior que apenas mostrava ícones:
-
-```typescript
+// Renderização de vídeos do YouTube
 {(source.type === "video" || (source.type === "link" && isYoutubeUrl(source.url))) && (
   <div className="mt-2 border border-zinc-200 dark:border-zinc-700 rounded-md overflow-hidden">
     {(() => {
       const videoId = getYoutubeVideoId(source.url);
-      console.log("Vídeo detectado:", source.url, "ID:", videoId);
       
       return videoId ? (
         <div className="aspect-video w-full">
@@ -290,284 +152,45 @@ A implementação de iframe para vídeos do YouTube substitui a abordagem anteri
           ></iframe>
         </div>
       ) : (
-        <div className="aspect-video bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-          <FileVideo className="h-8 w-8 text-zinc-400 dark:text-zinc-500" />
-          <span className="text-xs ml-2 text-zinc-500 dark:text-zinc-400">
-            Vídeo não pode ser incorporado. Clique no link acima para assistir.
-          </span>
-        </div>
+        // Fallback para vídeos não incorporáveis
       );
     })()}
   </div>
 )}
 ```
 
-#### Sistema de Abas para Filtrar Fontes (linhas 404-439)
-
-O componente implementa um sistema de abas para filtrar fontes por categoria (web, vídeos, imagens, etc.):
-
-```typescript
-{/* Abas para as categorias - Design mais moderno e compacto */}
-<div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-1 mb-3 overflow-x-auto flex items-center">
-  <div className="flex w-full">
-    {tabs.filter(tab => tab.count > 0 || tab.id === "todos").map(tab => (
-      <button
-        key={tab.id}
-        onClick={() => setActiveTab(tab.id)}
-        className={cn(
-          "flex items-center gap-1 transition-all duration-200 px-2 py-1.5 text-xs rounded-md flex-1 justify-center",
-          activeTab === tab.id
-            ? "bg-white dark:bg-zinc-800 shadow-sm text-blue-600 dark:text-blue-400"
-            : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
-        )}
-      >
-        {tab.icon}
-        <span className="hidden sm:inline">{tab.label}</span>
-        {tab.count > 0 && (
-          <span className={cn(
-            "text-[10px] min-w-[16px] h-4 flex items-center justify-center rounded-full",
-            activeTab === tab.id
-              ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-              : "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300"
-          )}>
-            {tab.count}
-          </span>
-        )}
-      </button>
-    ))}
-  </div>
-</div>
-```
-
-### Integração no Sistema (tool-call-side-panel.tsx)
-
-A integração do componente SourcesToolView no sistema existente foi feita no arquivo `tool-call-side-panel.tsx`:
-
-```typescript
-// Importação do componente
-import { SourcesToolView } from "./tool-views/SourcesToolView";
-
-// Registro do componente para os tipos de ferramentas relacionadas a fontes
-case 'add-source':
-case 'extract-sources':
-  return (
-    <SourcesToolView
-      name={normalizedToolName}
-      assistantContent={assistantContent}
-      toolContent={toolContent}
-      assistantTimestamp={assistantTimestamp}
-      toolTimestamp={toolTimestamp}
-      isSuccess={isSuccess}
-      isStreaming={isStreaming}
-    />
-  );
-```
-
-## Algoritmos e Processos Importantes
-
-### 1. Extração de Fontes de Diferentes Formatos JSON (SourcesToolView.tsx, linhas 98-358)
-
-Um dos desafios críticos foi lidar com a variabilidade nos formatos de resposta da ferramenta backend. O componente implementa várias estratégias de extração:
-
-1. **Parsing de JSON direto**: Tenta fazer parse do conteúdo como JSON
-2. **Extração de conteúdo de tags XML**: Busca por padrões como `<tool_result>` e `<add-source>`
-3. **Extração via regex**: Usa expressões regulares para extrair URLs e metadados
-4. **Fallbacks em cascata**: Implementa múltiplas estratégias de fallback
-
-Exemplo de um dos métodos de extração (parcial):
-
-```typescript
-// Caso especial para o formato "ToolResult(success=True, output={...})"
-if (typeof content === 'string' && content.includes('ToolResult(success=True, output=')) {
-  try {
-    // Extrair o objeto de saída usando regex
-    const outputMatch = content.match(/output=({[\s\S]*?})\)/);
-    if (outputMatch && outputMatch[1]) {
-      // Converter a string do objeto para um objeto JSON válido
-      let jsonStr = outputMatch[1]
-        .replace(/'/g, '"')                 // Substitui aspas simples por duplas
-        .replace(/(\w+):/g, '"$1":')        // Adiciona aspas aos nomes das propriedades
-        .replace(/"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)"/g, '"$1"'); // Mantém formato de data
-      
-      try {
-        const outputObj = JSON.parse(jsonStr);
-        return [categorizeSource(outputObj)];
-      } catch (jsonError) {
-        // Tentativa de extração manual em caso de falha
-        const url = content.match(/'url':\s*'([^']+)'/)?.[1];
-        const title = content.match(/'title':\s*'([^']+)'/)?.[1];
-        // ...
-      }
-    }
-  } catch (e) {
-    console.error("Erro ao processar ToolResult:", e);
-  }
-}
-```
-
-### 2. Categorização Automática de Fontes (linhas 93-125)
-
-A função `categorizeSource` implementa um algoritmo avançado para classificar fontes em diferentes categorias baseado na URL e conteúdo:
-
-```typescript
-function categorizeSource(source: Source): Source {
-  const url = source.url.toLowerCase();
-  let category = "web"; // Categoria padrão
-  let type = source.type;
-  
-  // Determinar tipo baseado na URL
-  if (source.type === "video" || url.includes("youtube.com") || url.includes("youtu.be") || url.includes("vimeo") || url.match(/\.(mp4|mov|webm|avi)$/i)) {
-    type = "video";
-    category = "videos";
-  } else if (source.type === "image" || url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
-    type = "image";
-    category = "imagens";
-  } else if (url.includes("twitter.com") || url.includes("x.com") || url.includes("facebook.com") || url.includes("instagram.com") || 
-            url.includes("linkedin.com") || url.includes("tiktok.com") || 
-            url.match(/social|profile|user/i)) {
-    type = "social";
-    category = "social";
-  } else if (url.includes("forum") || url.includes("community") || url.includes("reddit.com") || 
-            url.includes("stackoverflow.com") || url.includes("discourse") || 
-            url.match(/forum|community|group|discussion/i)) {
-    type = "community";
-    category = "comunidade";
-  } else if (url.includes("scholar.google") || url.includes("doi.org") || url.includes("arxiv.org") ||
-            url.includes("sciencedirect.com") || url.includes("researchgate.net") || url.includes("academia.edu") ||
-            url.match(/journal|paper|research|doi|abstract|proceedings|scholar/i)) {
-    type = "academic";
-    category = "academic";
-  } else {
-    type = "link";
-    category = "web";
-  }
-  
-  return { ...source, type: type as any, category };
-}
-```
-
 ## Fluxo de Dados e Funcionamento
 
-O fluxo completo do recurso Sources funciona da seguinte forma:
+O fluxo compacto do recurso funciona em 4 etapas:
 
-1. **Coleta de Fontes (Backend)**:
-   - O agente encontra uma fonte relevante durante pesquisa
-   - Chama `add_source` ou `extract_sources` via XML ou JSON
-   - A ferramenta processa e retorna dados estruturados
+1. **Backend**: Agente chama `add_source` ou `extract_sources` ao encontrar referências
+2. **Transporte**: Dados são enviados ao frontend via resposta da ferramenta
+3. **Processamento**: Frontend extrai e categoriza as fontes, armazenando no localStorage
+4. **Visualização**: Fontes são exibidas no painel lateral com suporte para imagens e vídeos
 
-2. **Transporte de Dados**:
-   - O resultado da ferramenta é enviado como resposta para o frontend
-   - Os dados passam pelo formato de mensagem do sistema
+## Correções e Melhorias
 
-3. **Processamento Frontend**:
-   - O componente `SourcesToolView` recebe os dados da fonte
-   - Extrai informações usando uma das várias estratégias de parsing
-   - Categoriza automaticamente a fonte
-   - Armazena localmente para persistência
+### 1. Correção de Erro de Importação
+- **Problema**: `Import "agentpress.decorators" could not be resolved`
+- **Solução**: Atualizado o import para `from agentpress.tool import Tool, ToolResult, openapi_schema, xml_schema`
+- **Arquivos Afetados**: `backend/agent/tools/sources_tool.py`
 
-4. **Renderização Visual**:
-   - O componente renderiza diferentes visualizações baseadas no tipo da fonte:
-     - Links como cards clicáveis
-     - Imagens embutidas com visualização
-     - Vídeos como iframes do YouTube
-   - Oferece sistema de abas para filtrar por categoria
+### 2. Embed de Vídeos
+- **Implementação**: Iframe responsivo para vídeos do YouTube
+- **Detalhes**: Extração robusta de IDs, proporção de aspecto correta
 
-5. **Interação do Usuário**:
-   - Usuário pode filtrar fontes por categoria
-   - Clicar em links externos
-   - Assistir vídeos embutidos
-   - Visualizar imagens diretamente na interface
-
-## Correções e Melhorias Detalhadas
-
-### 1. Embed de Vídeos (SourcesToolView.tsx, linhas 462-494)
-- **Problema**: Versões anteriores apenas mostravam ícones para vídeos
-- **Solução**: Implementação de iframe para vídeos do YouTube
-- **Detalhes Técnicos**:
-  - Extração robusta de IDs de vídeo
-  - Iframe responsivo com proporção de aspecto
-  - Fallback para vídeos não incorporáveis
-  - Lazy loading para melhor performance
-
-### 2. Extração e Processamento de Dados (linhas 98-358)
-- **Problema**: Inconsistência em formatos de resposta do backend
-- **Solução**: Sistema de múltiplas estratégias de extração
-- **Detalhes Técnicos**:
-  - Suporte para diferentes padrões de JSON
-  - Extração de dados de tags XML
-  - Processamento de strings ToolResult
-  - Regex para extração de última instância
-
-### 3. Categorização e Filtragem Automática (linhas 93-125, 359-379)
-- **Problema**: Fontes misturadas sem organização
-- **Solução**: Sistema de categorias e abas de filtro
-- **Detalhes Técnicos**:
-  - Algoritmo de detecção de categoria
-  - Interface de filtro por abas
-  - Contadores por categoria
-  - UI responsiva para desktop e mobile
-
-### 4. Tratamento de Erros e Fallbacks (distribuído pelo componente)
-- **Problema**: Falhas na renderização de alguns tipos de conteúdo
-- **Solução**: Sistema abrangente de tratamento de erros
-- **Detalhes Técnicos**:
-  - Tratamento de URLs inválidas
-  - Fallbacks para imagens que falham no carregamento
-  - Estratégias alternativas de parsing
-  - Logging detalhado para depuração
+### 3. Sistema de Abas e Filtragem
+- **Implementação**: Interface com abas para diferentes tipos de conteúdo
+- **Detalhes**: UI responsiva, contadores por categoria
 
 ## Oportunidades de Melhoria Futura
 
-1. **Pré-visualização de Links**: Implementar cards de pré-visualização para links regulares
-2. **Extração de Metadados**: Melhorar a extração de metadados como descrições e thumbnails
-3. **Suporte para mais Plataformas de Vídeo**: Adicionar suporte para Vimeo, TikTok e outros serviços
-4. **Exportação de Fontes**: Permitir exportar lista de fontes em diferentes formatos
-5. **Persistência no Banco de Dados**: Mover do localStorage para persistência no banco de dados
-6. **Interface de Administração**: Ferramentas para gerenciar fontes (editar, excluir, etc.)
-7. **Compartilhamento de Fontes**: Funcionalidade para compartilhar fontes específicas
-
-## Testes Realizados
-
-### Testes de Unidade
-- Testes para a função `getYoutubeVideoId` com múltiplos formatos de URL
-- Testes para a função `categorizeSource` com diferentes tipos de conteúdo
-- Testes para as funções de extração com vários formatos de resposta
-
-### Testes de Integração
-- Testes de integração entre backend e frontend
-- Verificação de compatibilidade com diferentes formatos de resposta
-- Simulação de cenários de erro e validação de fallbacks
-
-### Testes de UI
-- Testes de renderização em diferentes tamanhos de tela
-- Verificação de acessibilidade dos componentes
-- Testes de usabilidade do sistema de abas e filtros
-
-## Arquivos Modificados e Detalhes Técnicos
-
-### Backend
-
-| Arquivo | Linhas | Descrição das Modificações |
-|---------|--------|----------------------------|
-| `backend/agent/tools/sources_tool.py` | 1-374 | Novo arquivo com implementação completa da ferramenta SourcesTool |
-| `backend/agent/run.py` | 50 | Importação: `from agent.tools.sources_tool import SourcesTool` |
-| `backend/agent/run.py` | 94 | Registro: `thread_manager.add_tool(SourcesTool)` |
-| `backend/agent/prompt.py` | 347-403 | Atualização das instruções do sistema sobre uso de Sources |
-
-### Frontend
-
-| Arquivo | Linhas | Descrição das Modificações |
-|---------|--------|----------------------------|
-| `frontend/src/components/thread/tool-views/SourcesToolView.tsx` | 1-836 | Novo arquivo com implementação completa do componente visual |
-| `frontend/src/components/thread/tool-call-side-panel.tsx` | 22-23 | Importação do componente SourcesToolView |
-| `frontend/src/components/thread/tool-call-side-panel.tsx` | 113-120 | Registro para uso com tipos 'add-source' e 'extract-sources' |
-| `frontend/src/components/thread/tool-views/utils.ts` | 612-654 | Funções para extração de dados de fontes |
-| `frontend/src/components/thread/tool-views/utils.ts` | 655-684 | Atualização da função getToolComponent |
+1. **Persistência no Banco de Dados**: Migrar do localStorage para armazenamento permanente
+2. **Suporte para mais Plataformas**: Adicionar Vimeo, TikTok e outros serviços de vídeo
+3. **Interface de Gerenciamento**: Adicionar opções para editar e excluir fontes
 
 ## Conclusão
 
-O recurso de Sources representa uma melhoria significativa na experiência do usuário da plataforma Suna.so, permitindo que o agente salve e organize automaticamente referências visuais e textuais importantes durante suas pesquisas.
+O recurso Sources é uma implementação compacta mas poderosa que melhora significativamente a experiência do usuário na plataforma Suna.so. Com apenas 2 arquivos novos e pequenas modificações em arquivos existentes, o recurso oferece uma experiência completa de visualização de fontes com suporte para links, imagens e vídeos.
 
-A implementação foi projetada com foco em robustez e flexibilidade, utilizando técnicas avançadas de processamento de dados para lidar com diferentes formatos e cenários. O sistema de categorização automática e a interface de usuário intuitiva tornam a navegação pelas fontes uma experiência fluida.
-
-A integração entre o backend e frontend foi construída para ser resiliente a diferentes formatos de dados, com várias estratégias de fallback e tratamento de erros para garantir que as fontes sejam corretamente exibidas mesmo em cenários complexos. 
+A implementação foi projetada visando alta taxa de sucesso através de técnicas robustas de processamento de dados e estratégias de fallback, garantindo que as fontes sejam exibidas corretamente mesmo em cenários complexos. 
